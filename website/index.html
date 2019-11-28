@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      #map {
+        width: 100%;
+        height: 85%;
+        position: absolute;
+        left: 0%;
+        top: 5%;
+        margin: 0 auto;
+      }
+      #footer {
+        width: 60%;
+        height: 10%;
+        position: absolute;
+        left: 20%;
+        top: 90%;
+        margin: 0 auto;
+      }
+      #outer {
+        height: 100%;
+      }
+    </style>
+    <title>Sierra Springs Watch Conditions</title>
+  </head>
+  <body>
+    <h3>Sierra Springs Watch Conditions</h3>
+    <!--The div element for the map -->
+    <div id="outer">
+      <div id="map"></div>
+      <div id="footer">
+        <center>&copy;2019 Jason Legate / Problems? Please <a href="mailto:ssw@legate.ninja">email me</a> / Visit us at <a href="https://www.facebook.com/groups/705031089555412/">Facebook</a></center>
+      </div>
+    </div>
+    <script>
+      var map;
+      var infoWindow;
+      var keepInfoWindow;
+      var strokeColor = new Object();
+      var strokeWeight = new Object();
+      var strokeOpacity = new Object();
+      var geojsonpId = 'geojsonp_script';
+      var localList = new Object();
+      var iconBase = 'https://www.sierraspringswatch.org/icons/'
+
+      strokeColor['icy'] = "#78110e";
+      strokeWeight['icy'] = 4;
+      strokeOpacity['icy'] = 0.7;
+      strokeColor['plowed'] = "#228b22";
+      strokeWeight['plowed'] = 3;
+      strokeOpacity['plowed'] = 0.5;
+
+      // Initialize and add the map
+      function initMap() {
+        
+        // The location of SSOA
+        // 38.710307,-120.6178007
+        var sierraSprings = {lat: 38.710307, lng: -120.6178007};
+        var defaultZoom = 13;
+        
+        // The map, centered at SSOA
+        map = new google.maps.Map(
+            document.getElementById('map'), {
+              zoom: defaultZoom,
+              center: sierraSprings,
+              mapTypeId: 'roadmap'
+            });
+        
+        // Add traffic overlay, just for completeness
+        var trafficLayer = new google.maps.TrafficLayer();
+        trafficLayer.setMap(map);
+
+        infoWindow = new google.maps.InfoWindow();
+
+        createGeoJsonPScript();
+      }
+
+      function createGeoJsonPScript() {
+        var script = document.createElement('script');
+        script.setAttribute('id', geojsonpId);
+        var ts = Math.floor(Date.now() / 1000);
+        script.src = 'https://api.sierraspringswatch.org/?'+ts;
+        document.getElementsByTagName('head')[0].appendChild(script);        
+      }
+
+      function replaceGeoJsonPScript() {
+        var script = document.getElementById(geojsonpId);
+        script.parentNode.removeChild(script);
+        createGeoJsonPScript();        
+      }
+
+      window.sswfeed_callback = function(results) {
+        var remoteList = new Object();
+
+        if (results.features != null) {
+          // First go through the returned list
+          for (var i = 0; i < results.features.length; i++) {
+            var id = results.features[i].id;
+            remoteList[id] = true;
+            var geometry = results.features[i].geometry;
+            var incidentObject;
+            var description;
+
+            // id isn't locally drawn yet
+            if (!(id in localList)) {
+              console.log("New ID: " + id);
+              console.log("Type: " + geometry.type);
+              // Check the type of geometry
+              switch(geometry.type) {
+                case "Point":
+                  var coords = results.features[i].geometry.coordinates;
+                  console.log("Coords: " + coords)
+                  var latLng = new google.maps.LatLng(coords[1], coords[0]);
+                  switch(results.features[i].type) {
+                    case "tree":
+                      description = "Tree(s) down";
+                      // icon = "tree.png";
+                      break;
+                    case "lines":
+                      description = "Lines down";
+                      // icon = "power.png";
+                      break;
+                    default:
+                      description = "Unknown Incident"
+                      break;
+                  }
+                  if (icon != null) {
+                    incidentObject = new google.maps.Marker({
+                      position: latLng,
+                      icon: iconBase + icon,
+                      map: map,
+                      title: 'Unknown Issue'
+                    });
+                  } else {
+                    incidentObject = new google.maps.Marker({
+                      position: latLng,
+                      map: map,
+                      title: 'Unknown Issue'
+                    });
+                  }
+                  incidentObject.setTitle(description);
+                  break;
+                case "LineString":
+                  var coordsList = results.features[i].geometry.coordinates;
+                  var latLngs = new Array();
+                  for (var c = 0; c < coordsList.length; c++) {
+                    var latLng = new google.maps.LatLng(coordsList[c][1], coordsList[c][0]);
+                    latLngs.push(latLng);
+                  }
+                  incidentObject = new google.maps.Polyline({
+                    path: latLngs,
+                    map: map,
+                    title: 'Unknown Issue'
+                  });
+                  switch(results.features[i].type) {
+                    case "icy":
+                      description = "Icy roadway";
+                      incidentObject.setOptions({
+                        strokeColor: strokeColor['icy'],
+                        strokeWeight: strokeWeight['icy'],
+                        strokeOpacity: strokeOpacity['icy']
+                      });
+                      break;
+                      case "plowed":
+                        description = "Plowed roadway";
+                        incidentObject.setOptions({
+                          strokeColor: strokeColor['plowed'],
+                          strokeWeight: strokeWeight['plowed'],
+                          strokeOpacity: strokeOpacity['plowed']
+                        });
+                        break;
+                    default:
+                      description = "Unknown Road Conditions"
+                      break;
+                  }
+                  break;
+              }
+              var contentString = '<div id="content">'+
+                              '<h1 id="type" class="popupType">'+ description + '</h1>'+
+                              (('details' in results.features[i].properties) ? '<p>'+results.features[i].properties.details+'</p>' : '')+
+                              '<p><b>Reported by</b>: ' + results.features[i].properties.reporter + '</p>'+
+                              '</div>';
+              createInfoWindow(incidentObject, contentString);
+              localList[id] = incidentObject;
+            }
+          }
+        }
+
+        // There are actually local entries to work with, so deal with them
+        if (Object.keys(localList).length > 0) {
+          console.log("Cleanup localList");
+          // Remote list is 0, so wipe all elements
+          for (let [id, element] of Object.entries(localList)) {
+            if (!(id in remoteList)) {
+              element.setMap(null);
+              delete localList[id];
+            }
+          }
+        }
+
+        var waitTime = 90000;
+        if ("waitPeriod" in results) {
+          waitTime = results.waitPeriod;
+        }
+        console.log("Waiting for " + waitTime + "ms");
+        setTimeout(replaceGeoJsonPScript, 90000);
+      }
+
+      function createInfoWindow(incidentObject, content) {
+          console.log('addListener to show '+content);
+          google.maps.event.addListener(incidentObject, 'click', function(event) {
+              infoWindow.setContent(content);              
+              infoWindow.setPosition(event.latLng);
+              infoWindow.open(map);
+              keepInfoWindow = infoWindow;
+          });
+          google.maps.event.addListener(incidentObject, 'mouseover', function(event) {
+              infoWindow.setContent(content);
+              infoWindow.setPosition(event.latLng);
+              infoWindow.open(map);
+              keepInfoWindow = null;
+          });
+          google.maps.event.addListener(incidentObject, 'mouseout', function(event) {
+              if (keepInfoWindow != infoWindow) {
+                infoWindow.close();
+              }
+          })
+      }
+    </script>
+    <script async defer
+    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCcgTAU4IO-xOLmcIsFY_uPCAuf2waocf0&callback=initMap">
+    </script>
+  </body>
+</html>

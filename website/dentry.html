@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no">
+    <meta charset="utf-8">
+    <title>SSW Conditions Data Entry</title>
+    <style>
+      html, body {
+        height: 100%;
+        margin: 0px;
+        padding: 0px
+      }
+      
+      #map {
+        width: 90%;
+        height: 90%;
+        position: absolute;
+        left: 5%;
+        top: 5%;
+        margin: 0 auto;
+      }
+      
+      #outer {
+        height: 100%;
+        width: 100%;
+      }
+
+      #panel {
+        position: absolute;
+        top: 5px;
+        left: 50%;
+        margin-left: -180px;
+        z-index: 5;
+        background-color: #fff;
+        padding: 5px;
+        border: 1px solid #999;
+      }
+
+      #bar {
+        width: 240px;
+        background-color: rgba(255, 255, 255, 0.75);
+        margin: 8px;
+        padding: 4px;
+        border-radius: 4px;
+      }
+
+      #autoc {
+        width: 100%;
+        box-sizing: border-box;
+      }
+    </style>
+
+    <script src="https://www.sierraspringswatch.org/jquery-bundle.js"></script>
+    <script src="https://www.sierraspringswatch.org/moment.min.js"></script>
+    <script
+      src="https://maps.googleapis.com/maps/api/js?libraries=drawing,places&key=AIzaSyCcgTAU4IO-xOLmcIsFY_uPCAuf2waocf0"></script>
+    <script>
+var apiKey = 'AIzaSyCcgTAU4IO-xOLmcIsFY_uPCAuf2waocf0';
+
+var map;
+var drawingManager;
+var polylines = [];
+var markers = [];
+var snappedCoordinates = [];
+var pathToStore = [];
+var jsonCoordinates;
+var activeCoordinates;
+var activeType;
+
+function initMap() {
+  // The location of SSOA
+  // 38.710307,-120.6178007
+  var sierraSprings = {lat: 38.710307, lng: -120.6178007};
+  var defaultZoom = 13;
+
+  var mapOptions = {
+    zoom: defaultZoom,
+    center: sierraSprings,
+  };
+  map = new google.maps.Map(document.getElementById('map'), mapOptions);
+
+  // Adds a Places search box. Searching for a place will center the map on that
+  // location.
+  map.controls[google.maps.ControlPosition.RIGHT_TOP].push(
+      document.getElementById('bar'));
+  var autocomplete = new google.maps.places.Autocomplete(
+      document.getElementById('autoc'));
+  autocomplete.bindTo('bounds', map);
+  autocomplete.addListener('place_changed', function() {
+    var place = autocomplete.getPlace();
+    if (place.geometry.viewport) {
+      map.fitBounds(place.geometry.viewport);
+    } else {
+      map.setCenter(place.geometry.location);
+      map.setZoom(17);
+    }
+  });
+
+  initDrawing();
+
+  // Clear button. Click to remove all polylines.
+  $('#clear').click(function(ev) {
+    for (var i = 0; i < polylines.length; ++i) {
+      polylines[i].setMap(null);
+    }
+    polylines = [];
+    for (var i = 0; i < markers.length; ++i) {
+      markers[i].setMap(null);
+    }
+    markers = [];
+    ev.preventDefault();
+    return false;
+  });
+  $("form select[name=type]").change(function () {
+      console.log($(this).val());
+      switch($(this).val()) {
+        case "tree":
+        case "lines":
+          console.log("Switch to single point selection");
+          drawingManager.setDrawingMode('marker');
+          break;
+        default:
+          console.log("Switch to route selection");
+          drawingManager.setDrawingMode('polyline');
+          break;
+      }
+  });
+}
+
+function initDrawing() {
+  // Enables the polyline drawing control. Click on the map to start drawing a
+  // polyline. Each click will add a new vertice. Double-click to stop drawing.
+  drawingManager = new google.maps.drawing.DrawingManager({
+    drawingMode: google.maps.drawing.OverlayType.POLYLINE,
+    drawingControl: true,
+    drawingControlOptions: {
+      position: google.maps.ControlPosition.TOP_CENTER,
+      drawingModes: [
+        google.maps.drawing.OverlayType.POLYLINE,
+        google.maps.drawing.OverlayType.MARKER,
+        google.maps.drawing.OverlayType.POLYGON
+      ]
+    },
+    polylineOptions: {
+      strokeColor: '#696969',
+      strokeWeight: 2
+    }
+  });
+  drawingManager.setMap(map);
+
+  // Save marker
+  drawingManager.addListener('markercomplete', function(marker) {
+    markers.push(marker);
+    var pos = marker.getPosition();
+    activeCoordinates = [pos.lng(), pos.lat()];
+    activeType = "Point";
+    jsonCoordinates = JSON.stringify(activeCoordinates);
+    console.log(jsonCoordinates);
+  });
+
+  // Snap-to-road when the polyline is completed.
+  drawingManager.addListener('polylinecomplete', function(poly) {
+    var path = poly.getPath();
+    poly.setMap(null);
+    runSnapToRoad(path);
+  });
+}
+
+// Snap a user-created polyline to roads and draw the snapped path
+function runSnapToRoad(path) {
+  var pathValues = [];
+  for (var i = 0; i < path.getLength(); i++) {
+    pathValues.push(path.getAt(i).toUrlValue());
+  }
+
+  $.get('https://roads.googleapis.com/v1/snapToRoads', {
+    interpolate: true,
+    key: apiKey,
+    path: pathValues.join('|')
+  }, function(data) {
+    processSnapToRoadResponse(data);
+    drawSnappedPolyline();
+  });
+}
+
+// Store snapped polyline returned by the snap-to-road service.
+function processSnapToRoadResponse(data) {
+  pathToStore = [];
+  snappedCoordinates = [];
+  for (var i = 0; i < data.snappedPoints.length; i++) {
+    pathToStore.push([data.snappedPoints[i].location.longitude, data.snappedPoints[i].location.latitude]);
+    var latlng = new google.maps.LatLng(
+        data.snappedPoints[i].location.latitude,
+        data.snappedPoints[i].location.longitude);
+    snappedCoordinates.push(latlng);
+  }
+  activeCoordinates = pathToStore;
+  activeType = "LineString";
+  jsonCoordinates = JSON.stringify(activeCoordinates);
+  console.log(jsonCoordinates);
+}
+
+// Draws the snapped polyline (after processing snap-to-road response).
+function drawSnappedPolyline() {
+  var snappedPolyline = new google.maps.Polyline({
+    path: snappedCoordinates,
+    strokeColor: 'black',
+    strokeWeight: 3
+  });
+  snappedPolyline.setMap(map);
+  polylines.push(snappedPolyline);
+}
+
+function postData(data){
+  console.log(JSON.stringify(data));
+  $.ajax({
+         type: "POST",
+         url: "https://api.sierraspringswatch.org/v1/condition",
+         data: JSON.stringify(data),
+         contentType: "application/json; charset=utf-8",
+         crossDomain: true,
+         dataType: "json",
+         success: function (data, status, jqXHR) {
+             alert('success');
+         },
+
+         error: function (jqXHR, status) {
+             // error handler
+             console.log(jqXHR);
+             alert('fail' + status.code);
+         }
+      });
+}
+
+$(window).load(initMap);
+
+$(document).ready(function() {
+  console.log("ready function");
+  var form = document.getElementById("cdxForm");
+  $('#cdxForm').on('submit', function (e) {
+    console.log('submit');
+    // stop the regular form submission
+    e.preventDefault();
+
+    // collect the form data while iterating over the inputs
+    var data = {};
+    data['properties'] = {};
+    data['geometry'] = {};
+    for (var i = 0, ii = form.length; i < ii; ++i) {
+      var input = form[i];
+      if (input.name) {
+        switch (input.name) {
+          case "details":
+          case "reporter":
+            data['properties'][input.name] = input.value;
+            break;
+          case "reported":
+            if (input.value == "now") {
+              data['properties'][input.name] = moment().unix();
+            } else {
+              data['properties'][input.name] = input.value;
+            }
+            break;
+          default:
+            console.log("set " + input.name + " to " + input.value)
+            data[input.name] = input.value;
+            break;
+        }
+      }
+    }
+    console.log(activeCoordinates);
+    data['current'] = 1;
+    data['geometry']['coordinates'] = activeCoordinates;
+    data['geometry']['type'] = activeType;
+    postData(data);
+  });
+});
+    </script>
+  </head>
+
+  <body>
+    <div id="outer">
+      <div id="map"></div>
+      <div id="bar">
+        <p class="auto"><input type="text" id="autoc"/></p>
+        <p><a id="clear" href="#">Click here</a> to clear map.</p>
+        <form method=post id="cdxForm">
+          <p class="data">Type:
+            <select name="type">
+              <option value="icy">Icy</option>
+              <option value="plowed">Plowed</option>
+              <option value="tree">Tree</option>
+              <option value="lines">Lines</option>
+            </select>
+          </p>
+          <p class="data">Details<input type=text name="details"></p>
+          <p class="data">Reporter<input type=text name="reporter"></p>
+          <p class="data">Reported<input type=text name="reported" value="now"></p>
+          <input type="submit" value="Submit Data" id="submitBtn"></input>
+        </form>
+      </div>
+    </div>
+  </body>
+</html>
