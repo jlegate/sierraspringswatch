@@ -6,12 +6,8 @@ import (
 	"fmt"
     "log"
     "crypto/sha1"
-	// "context"
-    // "regexp"
-    // "strings"
 	"net/http"
 	"os"
-	// "strconv"
 
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-lambda-go/events"
@@ -24,9 +20,12 @@ import (
 
 var (
 	ErrorBackend = errors.New("Something went wrong")
-    tableName = os.Getenv("SSW_CDB_TABLE")
+    tableNameBase = os.Getenv("SSW_CDB_TABLE")
     waitPeriod = float64(120000)
 )
+
+var itemsTable = fmt.Sprintf("%s-items", tableNameBase)
+
 var errorLogger = log.New(os.Stderr, "ERROR ", log.Llongfile)
 var DDB *dynamodb.DynamoDB
 
@@ -85,47 +84,39 @@ func init() {
     fmt.Println(fmt.Sprintf("%+v", DDB))
 }
 
-func fetchConditions(centerCoords RequestCoords) ([]Feature, error) {
-    var results []Feature
+// Fetch the current list of conditions from DynamoDB
 
+func fetchConditions(centerCoords RequestCoords) ([]Feature, Config, error) {
+    var results []Feature
+    var config Config
+
+    // We use DynamoDB.Scan() to pull the entire list of entities
     input := &dynamodb.ScanInput{
         TableName: aws.String(tableName),
     }
     result, serr := DDB.Scan(input)
     if serr != nil {
-        return nil, serr
+        return nil, Config{}, serr
     }
 
     for _, i := range result.Items {
-        feature := Feature{}
-        if err := dynamodbattribute.UnmarshalMap(i, &feature); err != nil {
-            return nil, err
+        fmt.Println(fmt.Sprintf("Info: %+v", *i["id"].S))
+        if *i["id"].S == "config" {
+            config = Config{}
+            if err := dynamodbattribute.UnmarshalMap(i, &config); err != nil {
+                return nil, Config{}, err
+            }
+            fmt.Println(fmt.Sprintf("CONFIG: %+v", config))
+        } else {
+            feature := Feature{}
+            if err := dynamodbattribute.UnmarshalMap(i, &feature); err != nil {
+                return nil, Config{}, err
+            }
+            results = append(results, feature)
         }
-        results = append(results, feature)
     }
-    return results, nil
+    return results, config, nil
 }
-
-// func fetchConfig() (Config, error) {
-//     var results Config
-
-//     input := &dynamodb.ScanInput{
-//         TableName: aws.String(tableName),
-//     }
-//     result, serr := DDB.Scan(input)
-//     if serr != nil {
-//         return nil, serr
-//     }
-
-//     for _, i := range result.Items {
-//         feature := Feature{}
-//         if err := dynamodbattribute.UnmarshalMap(i, &feature); err != nil {
-//             return nil, err
-//         }
-//         results = append(results, feature)
-//     }
-//     return results, nil
-// }
 
 func putCondition(feature Feature) (error) {
     fmt.Println("putCondition()")
@@ -140,6 +131,7 @@ func putCondition(feature Feature) (error) {
     current := &dynamodb.AttributeValue{
         N: aws.String("1"),
     }
+
     timelessFeature := feature
     timelessFeature.Properties.Reported = 0
     jsonObj, _ := json.Marshal(timelessFeature)
@@ -164,28 +156,6 @@ func putCondition(feature Feature) (error) {
         return perr
     }
     return nil
-}
-
-func handleGet(request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
-    fmt.Printf("Requested path: %s\n", request.Path)
-    return getConditions(request)
-}
-
-func handlePost(request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
-    fmt.Printf("Requested path: %s\n", request.Path)
-    return writeCondition(request)
-}
-
-func handleOptions(request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
-    fmt.Printf("Requested path: %s\n", request.Path)
-    response := events.APIGatewayProxyResponse{Headers: make(map[string]string)}
-
-    response.StatusCode = http.StatusOK
-
-    response.Headers["Access-Control-Allow-Origin"] = "*"
-    response.Headers["Access-Control-Allow-Headers"] = "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers"
-    response.Body = ""
-    return response, nil
 }
 
 func writeCondition(request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
@@ -236,13 +206,11 @@ func getConditions(request events.APIGatewayProxyRequest) (events.APIGatewayProx
     requestCoords.Lat = 0
     requestCoords.Lng = 0
 
-    features, err := fetchConditions(requestCoords)
-    var config Config
-
-    config.StrokeWeight.Plowed = "6"
+    features, config, err := fetchConditions(requestCoords)
 
     if err == nil {
         fmt.Printf("---\n%+v\n", features)
+        fmt.Println(fmt.Printf("%+v", config))
         if response.Body == "" {
             var clientResponse ClientResponse
             clientResponse.Features = features
@@ -256,6 +224,28 @@ func getConditions(request events.APIGatewayProxyRequest) (events.APIGatewayProx
         }
     }
 
+    return response, nil
+}
+
+func handleGet(request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+    fmt.Printf("Requested path: %s\n", request.Path)
+    return getConditions(request)
+}
+
+func handlePost(request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+    fmt.Printf("Requested path: %s\n", request.Path)
+    return writeCondition(request)
+}
+
+func handleOptions(request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+    fmt.Printf("Requested path: %s\n", request.Path)
+    response := events.APIGatewayProxyResponse{Headers: make(map[string]string)}
+
+    response.StatusCode = http.StatusOK
+
+    response.Headers["Access-Control-Allow-Origin"] = "*"
+    response.Headers["Access-Control-Allow-Headers"] = "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers"
+    response.Body = ""
     return response, nil
 }
 
