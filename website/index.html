@@ -80,7 +80,10 @@
         var script = document.createElement('script');
         script.setAttribute('id', geojsonpId);
         var ts = Math.floor(Date.now() / 1000);
-        script.src = 'https://api.sierraspringswatch.org/?'+ts;
+        console.log(window.location.hostname);
+        var re = RegExp()
+        var testPrefix = (RegExp('^(www\.){0,1}test','i').test(window.location.hostname)) ? "test." : "";
+        script.src = 'https://api.'+testPrefix+'sierraspringswatch.org/?'+ts;
         document.getElementsByTagName('head')[0].appendChild(script);        
       }
 

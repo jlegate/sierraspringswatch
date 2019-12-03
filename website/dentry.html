@@ -111,6 +111,18 @@ function initMap() {
     ev.preventDefault();
     return false;
   });
+
+  // Resnap link. Click to re-snap polylines
+  $('#resnap').click(function(ev) {
+    if (polylines.length > 1) {
+      alert("Too many lines, clear and re-draw");
+    } else {
+      var path = polylines[0].getPath();
+      polylines[0].setMap(null);
+      runSnapToRoad(path);
+    }
+  })
+
   $("form select[name=type]").change(function () {
       console.log($(this).val());
       switch($(this).val()) {
@@ -208,6 +220,7 @@ function drawSnappedPolyline() {
     strokeWeight: 3
   });
   snappedPolyline.setMap(map);
+  polylines = [];
   polylines.push(snappedPolyline);
 }
 
@@ -284,6 +297,7 @@ $(document).ready(function() {
       <div id="bar">
         <p class="auto"><input type="text" id="autoc"/></p>
         <p><a id="clear" href="#">Click here</a> to clear map.</p>
+        <p><a id="resnap" href="#">Snap again</a></p>
         <form method=post id="cdxForm">
           <p class="data">Type:
             <select name="type">
